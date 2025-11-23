@@ -13,6 +13,7 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 
     <style>
@@ -20,113 +21,145 @@
         .card-hover:active { transform: scale(0.98); }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        /* Animazione caricamento */
+        .loader { border: 3px solid #1e293b; border-top: 3px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useMemo } = React;
+        const { useState, useEffect, useMemo } = React;
 
-        // --- IL TUO DATABASE ---
-        // Incolla qui le righe generate dal tuo foglio Excel/Google
-        const myCollection = [
-            { id: 1, name: "Red-Eyes Darkness Dragon", code: "SGX3-ITB01", rarity: "Secret Rare", price: 0.21, image: "https://images.ygoprodeck.com/images/cards/96561011.jpg", album: "Album Piccolo" },
-{ id: 2, name: "Apprentice Magician", code: "SGX1-ITI05", rarity: "Secret Rare", price: 0.11, image: "https://images.ygoprodeck.com/images/cards/9156135.jpg", album: "Album Piccolo" },
-{ id: 3, name: "D.D. Crow", code: "SGX3-ITF10", rarity: "Secret Rare", price: 0.02, image: "https://images.ygoprodeck.com/images/cards/24508238.jpg", album: "Album Piccolo" },
-{ id: 4, name: "Elemental HERO Tempest", code: "SGX2-ITA21", rarity: "Secret Rare", price: 0.26, image: "https://images.ygoprodeck.com/images/cards/83121692.jpg", album: "Album Piccolo" },
-{ id: 5, name: "Blue-Eyes Shining Dragon", code: "MOV-IT001", rarity: "Super Rare", price: 0.17, image: "https://images.ygoprodeck.com/images/cards/53347303.jpg", album: "Album Kuriboh" },
-        ];
+        // --- CONFIGURAZIONE ---
+        // Il tuo link Google Fogli CSV
+        const SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSw14WsxTtuS_D8MBMlP69c-5zVexJqQgl50_IEJQhwjOHVYluB9ob9OwEbJBy5IylkEmhItKQQPv17/pub?gid=1465139041&single=true&output=csv"; 
 
         const App = () => {
+            const [cards, setCards] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
             const [searchTerm, setSearchTerm] = useState("");
             const [activeAlbum, setActiveAlbum] = useState("Tutti");
 
-            const albumList = useMemo(() => {
-                const albums = new Set(myCollection.map(c => c.album || "Non Classificato"));
-                return ["Tutti", ...Array.from(albums).sort()];
+            useEffect(() => {
+                const fetchCards = async () => {
+                    try {
+                        const response = await fetch(SHEET_URL);
+                        if (!response.ok) throw new Error("Errore connessione foglio");
+                        const csvText = await response.text();
+
+                        Papa.parse(csvText, {
+                            header: true,
+                            skipEmptyLines: true,
+                            complete: (results) => {
+                                // MAPPATURA ESATTA DELLE TUE COLONNE
+                                const parsedCards = results.data.map((row, index) => {
+                                    // Pulizia Prezzo: toglie "€ " e cambia virgola in punto
+                                    let rawPrice = row["Prezzo singolo (€)"] || "0";
+                                    rawPrice = rawPrice.replace("€", "").replace(",", ".").trim();
+                                    
+                                    return {
+                                        id: index,
+                                        name: row["Nome Carta"] || "Senza Nome",
+                                        code: row["Codice Set"] || "---",
+                                        rarity: row["Rarità"] || "",
+                                        price: parseFloat(rawPrice) || 0,
+                                        // Corregge immagine per averla in HD
+                                        image: (row["Immagine"] || "").replace("cards_small", "cards"),
+                                        album: row["album"] || "Da Ordinare"
+                                    };
+                                }).filter(c => c.name !== "Senza Nome" && c.image !== ""); 
+                                
+                                setCards(parsedCards);
+                                setLoading(false);
+                                localStorage.setItem('binderCache_v2', JSON.stringify(parsedCards));
+                            },
+                            error: () => { throw new Error("Errore lettura CSV"); }
+                        });
+                    } catch (err) {
+                        console.log("Errore o offline, uso cache:", err);
+                        const cached = localStorage.getItem('binderCache_v2');
+                        if (cached) {
+                            setCards(JSON.parse(cached));
+                            setLoading(false);
+                        } else {
+                            setError("Impossibile caricare le carte. Controlla la connessione internet.");
+                            setLoading(false);
+                        }
+                    }
+                };
+                fetchCards();
             }, []);
 
-            const filteredCards = myCollection.filter(card => {
-                const matchesAlbum = activeAlbum === "Tutti" || (card.album || "Non Classificato") === activeAlbum;
+            // Logica Filtri
+            const albumList = useMemo(() => {
+                // Crea lista album unici e puliti
+                const albums = new Set(cards.map(c => c.album).filter(a => a));
+                return ["Tutti", ...Array.from(albums).sort()];
+            }, [cards]);
+
+            const filteredCards = cards.filter(card => {
+                const matchesAlbum = activeAlbum === "Tutti" || card.album === activeAlbum;
                 const matchesSearch = 
                     card.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
                     card.code.toLowerCase().includes(searchTerm.toLowerCase());
                 return matchesAlbum && matchesSearch;
             });
 
-            const totalValue = useMemo(() => {
-                return filteredCards.reduce((acc, card) => acc + card.price, 0).toFixed(2);
-            }, [filteredCards]);
+            const totalValue = useMemo(() => filteredCards.reduce((acc, c) => acc + c.price, 0).toFixed(2), [filteredCards]);
+
+            // Schermate di Caricamento
+            if (loading) return <div className="min-h-screen flex flex-col gap-4 items-center justify-center text-slate-400"><div className="loader"></div><p>Leggo il Raccoglitore...</p></div>;
+            if (error) return <div className="min-h-screen flex items-center justify-center text-red-400 p-6 text-center"><p><i className="fas fa-exclamation-circle text-2xl mb-2 block"></i>{error}</p></div>;
 
             return (
                 <div className="min-h-screen pb-6 flex flex-col">
-                    {/* Header Fisso */}
+                    {/* Header */}
                     <div className="sticky top-0 z-50 bg-slate-900/95 border-b border-slate-800 backdrop-blur-md shadow-lg">
                         <div className="max-w-4xl mx-auto px-4 py-3">
                             <div className="flex justify-between items-center mb-3">
-                                <h1 className="text-xl font-bold text-blue-400 flex items-center gap-2">
-                                    <i className="fas fa-layer-group"></i> Binder
-                                </h1>
+                                <h1 className="text-xl font-bold text-blue-400 flex items-center gap-2"><i className="fas fa-layer-group"></i> Binder</h1>
                                 <div className="bg-slate-800 px-3 py-1 rounded-lg border border-slate-700">
                                     <span className="text-xs text-slate-400 mr-2">Totale:</span>
                                     <span className="font-bold text-green-400">€ {totalValue}</span>
                                 </div>
                             </div>
-                            
                             <div className="relative">
                                 <i className="fas fa-search absolute left-3 top-2.5 text-slate-500"></i>
-                                <input 
-                                    type="text" 
-                                    placeholder="Cerca carta..." 
-                                    className="w-full bg-slate-950 text-white rounded-lg pl-10 pr-4 py-2 border border-slate-700 focus:outline-none focus:border-blue-500 transition-colors placeholder-slate-600"
-                                    value={searchTerm}
-                                    onChange={(e) => setSearchTerm(e.target.value)}
-                                />
+                                <input type="text" placeholder="Cerca carta..." className="w-full bg-slate-950 text-white rounded-lg pl-10 pr-4 py-2 border border-slate-700 focus:border-blue-500 transition-colors"
+                                    value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                             </div>
                         </div>
-
-                        {/* LISTA ALBUM */}
+                        {/* Tabs Album */}
                         <div className="border-t border-slate-800 bg-slate-900/50">
                             <div className="max-w-4xl mx-auto flex overflow-x-auto no-scrollbar py-2 px-4 gap-2">
-                                {albumList.map(albumName => (
-                                    <button
-                                        key={albumName}
-                                        onClick={() => setActiveAlbum(albumName)}
-                                        className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
-                                            activeAlbum === albumName 
-                                            ? "bg-blue-600 text-white shadow-lg shadow-blue-900/50" 
-                                            : "bg-slate-800 text-slate-400 border border-slate-700 hover:bg-slate-700"
-                                        }`}
-                                    >
-                                        {albumName}
+                                {albumList.map(name => (
+                                    <button key={name} onClick={() => setActiveAlbum(name)}
+                                        className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-bold transition-all ${activeAlbum === name ? "bg-blue-600 text-white shadow-lg shadow-blue-900/50" : "bg-slate-800 text-slate-400 border border-slate-700"}`}>
+                                        {name}
                                     </button>
                                 ))}
                             </div>
                         </div>
                     </div>
 
-                    {/* Griglia */}
-                    <div className="max-w-4xl mx-auto p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 w-full">
+                    {/* Griglia Carte */}
+                    <div className="max-w-4xl mx-auto p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                         {filteredCards.length > 0 ? (
                             filteredCards.map(card => (
-                                <div key={card.id} className="card-hover bg-slate-800 rounded-lg overflow-hidden border border-slate-700 shadow-md flex flex-col">
-                                    <div className="relative aspect-[2/3]">
-                                        <img src={card.image} alt={card.name} className="w-full h-full object-cover" loading="lazy" />
-                                        
-                                        {/* --- MODIFICA QUI: CODICE IN BASSO A SINISTRA --- */}
+                                <div key={card.id} className="card-hover bg-slate-800 rounded-lg overflow-hidden border border-slate-700 shadow-md flex flex-col relative group">
+                                    <div className="relative aspect-[2/3] overflow-hidden">
+                                        <img src={card.image} alt={card.name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" loading="lazy" />
                                         <div className="absolute bottom-1 left-1 bg-black/80 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] font-bold text-white border border-slate-600 shadow-sm">
                                             {card.code}
                                         </div>
-                                        {/* ------------------------------------------------ */}
-
                                     </div>
                                     <div className="p-2.5 flex-1 flex flex-col justify-between">
                                         <div>
                                             <h3 className="font-bold text-xs truncate text-slate-200 mb-1">{card.name}</h3>
-                                            <p className="text-[10px] text-slate-500 mb-2 flex items-center gap-1">
-                                                <i className="fas fa-folder-open"></i> {card.album || "Generico"}
-                                            </p>
+                                            <p className="text-[10px] text-slate-500 mb-2"><i className="fas fa-folder-open mr-1"></i>{card.album}</p>
                                         </div>
                                         <div className="flex justify-between items-center text-xs mt-auto">
                                             <span className="text-slate-500 truncate max-w-[50%]">{card.rarity}</span>
@@ -136,27 +169,19 @@
                                 </div>
                             ))
                         ) : (
-                            <div className="col-span-full text-center py-12 text-slate-500">
-                                <i className="fas fa-ghost text-3xl mb-2 opacity-50"></i>
-                                <p>Nessuna carta trovata in "{activeAlbum}".</p>
-                            </div>
+                            <div className="col-span-full text-center py-12 text-slate-500"><i className="fas fa-ghost text-3xl mb-2 opacity-50"></i><p>Nessuna carta trovata.</p></div>
                         )}
                     </div>
                 </div>
             );
         };
-
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
 
     <script>
         if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('./sw.js')
-                    .then(() => console.log('SW Binder registrato'))
-                    .catch(err => console.log('Errore SW', err));
-            });
+            window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
         }
     </script>
 </body>
