@@ -18,21 +18,20 @@
 
     <style>
         body { background-color: #0f172a; color: #e2e8f0; font-family: sans-serif; -webkit-tap-highlight-color: transparent; }
-        /* Stili attuali */
         .card-hover:active { transform: scale(0.98); }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .loader { border: 3px solid #1e293b; border-top: 3px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        /* 🆕 TRANSITION CUSTOM (per il modale) */
-        .modal-slide-transition { transition: transform 0.3s ease-out, opacity 0.3s ease-out; }
+        /* 🆕 Animazione di dissolvenza per l'immagine del modale */
+        .card-image-transition { transition: opacity 0.3s ease-in-out; }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, useRef } = React; // 🆕 Aggiunto useRef
         
         // --- CONFIGURAZIONE ---
         const SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSw14WsxTtuS_D8MBMlP69c-5zVexJqQgl50_IEJQhwjOHVYluB9ob9OwEbJBy5IylkEmhItKQQPv17/pub?gid=1465139041&single=true&output=csv"; 
@@ -44,9 +43,10 @@
             const [searchTerm, setSearchTerm] = useState("");
             const [activeAlbum, setActiveAlbum] = useState("Tutti");
             const [selectedCard, setSelectedCard] = useState(null); 
-            // 🆕 NUOVI STATI PER ANIMAZIONE SWIPE
             const [swipeStart, setSwipeStart] = useState(null);
             const [isAnimating, setIsAnimating] = useState(false);
+            // 🆕 NUOVO STATO: carta in transizione per l'animazione di uscita
+            const [transitioningCard, setTransitioningCard] = useState(null); 
 
             // Logica Filtri (Necessaria per la navigazione)
             const albumList = useMemo(() => {
@@ -67,7 +67,7 @@
                 return matchesAlbum && matchesSearch;
             });
             
-            // 🆕 Calcolo Indice e Navigazione
+            // Calcolo Indice e Navigazione
             const currentIndex = useMemo(() => {
                 if (!selectedCard) return -1;
                 return filteredCards.findIndex(c => c.id === selectedCard.id);
@@ -78,35 +78,26 @@
 
             const totalValue = useMemo(() => filteredCards.reduce((acc, c) => acc + c.price, 0).toFixed(2), [filteredCards]);
 
-            // Funzione di Navigazione con Animazione
+            // 🆕 FUNZIONE DI NAVIGAZIONE CON ANIMAZIONE DI DISSOLVENZA
             const navigateCard = (direction) => {
                 if (isAnimating) return; 
 
                 const newIndex = currentIndex + direction;
                 if (newIndex >= 0 && newIndex < filteredCards.length) {
-                    setIsAnimating(true);
-                    
-                    // Applica l'animazione di uscita (slide destra/sinistra)
-                    const directionClass = direction > 0 ? 'translate-x-full opacity-0' : '-translate-x-full opacity-0';
-                    const newCard = filteredCards[newIndex];
+                    setIsAnimating(true); // Inizio animazione
+                    setTransitioningCard(selectedCard); // Metti la carta corrente in stato di transizione
 
+                    // Avvia la dissolvenza della carta corrente
                     setTimeout(() => {
-                        setSelectedCard(newCard);
-                        // Rimuovi la classe dopo che il rendering è avvenuto
+                        setSelectedCard(filteredCards[newIndex]); // Imposta la nuova carta (appaiono nascoste inizialmente)
+                        setTransitioningCard(null); // Rimuovi la carta in transizione
+                        // Dopo un breve ritardo per permettere al DOM di aggiornarsi, rimuovi lo stato di animazione
                         setTimeout(() => setIsAnimating(false), 50); 
-                    }, 300); // Durata della transizione CSS
-                    
-                    // La classe di uscita è complessa da applicare direttamente in React senza ref/componenti separati
-                    // Useremo una logica più semplice: disattiviamo il bottone e aggiorniamo lo stato
-                    setSelectedCard(null); // Chiude per forzare l'uscita
-                    setTimeout(() => {
-                        setSelectedCard(newCard); // Riapre con la nuova carta
-                        setIsAnimating(false);
-                    }, 10);
+                    }, 300); // Durata della transizione CSS (0.3s)
                 }
             };
             
-            // 🆕 GESTIONE SWIPE
+            // GESTIONE SWIPE
             const handleTouchStart = (e) => {
                 if (!selectedCard) return;
                 setSwipeStart(e.targetTouches[0].clientX);
@@ -126,7 +117,7 @@
                 setSwipeStart(null);
             };
 
-            // 🆕 SCROLL LOCK (Blocca lo scroll del body quando il modale è aperto)
+            // SCROLL LOCK (Blocca lo scroll del body quando il modale è aperto)
             useEffect(() => {
                 if (selectedCard) {
                     document.body.style.overflow = 'hidden';
@@ -141,7 +132,6 @@
                 const fetchCards = async () => {
                     try {
                         const response = await fetch(SHEET_URL);
-                        // ... logica di fetching e parsing ...
                         if (!response.ok) throw new Error("Errore connessione foglio");
                         const csvText = await response.text();
                         Papa.parse(csvText, {
@@ -181,11 +171,12 @@
                 fetchCards();
             }, []);
 
-            if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-400"><div className="loader"></div></div>;
+            if (loading) return <div className="min-h-screen flex flex-col gap-4 items-center justify-center text-slate-400"><div className="loader"></div><p>Leggo il Raccoglitore...</p></div>;
+            if (error) return <div className="min-h-screen flex items-center justify-center text-red-400 p-6 text-center"><p><i className="fas fa-exclamation-circle text-2xl mb-2 block"></i>{error}</p></div>;
 
             return (
                 <div className="min-h-screen pb-6 flex flex-col">
-                    {/* Header e Ricerca */}
+                    {/* Header e Ricerca (omesso per brevità, è rimasto invariato) */}
                     <div className="sticky top-0 z-40 bg-slate-900/95 border-b border-slate-800 backdrop-blur-md shadow-lg">
                         <div className="max-w-4xl mx-auto px-4 py-3">
                             <div className="flex justify-between items-center mb-3">
@@ -218,33 +209,35 @@
 
                     {/* Griglia Carte */}
                     <div className="max-w-4xl mx-auto p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                        {filteredCards.map(card => (
-                            <div key={card.id} 
-                                onClick={() => setSelectedCard(card)} 
-                                className="card-hover bg-slate-800 rounded-lg overflow-hidden border border-slate-700 shadow-md flex flex-col relative group transition-all duration-300 cursor-pointer">
-                                <div className="relative aspect-[2/3] overflow-hidden">
-                                    <img src={card.image} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" loading="lazy" />
-                                    <div className="absolute bottom-1 left-1 bg-black/80 px-1.5 py-0.5 rounded text-[10px] font-bold text-white border border-slate-600">
-                                        {card.code}
+                        {filteredCards.length > 0 ? (
+                            filteredCards.map(card => (
+                                <div key={card.id} 
+                                    onClick={() => setSelectedCard(card)} 
+                                    className="card-hover bg-slate-800 rounded-lg overflow-hidden border border-slate-700 shadow-md flex flex-col relative group transition-all duration-300 cursor-pointer">
+                                    <div className="relative aspect-[2/3] overflow-hidden">
+                                        <img src={card.image} alt={card.name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" loading="lazy" />
+                                        <div className="absolute bottom-1 left-1 bg-black/80 px-1.5 py-0.5 rounded text-[10px] font-bold text-white border border-slate-600">
+                                            {card.code}
+                                        </div>
+                                    </div>
+                                    <div className="p-2.5 flex-1 flex flex-col justify-between">
+                                        <div>
+                                            <h3 className="font-bold text-xs truncate text-slate-200 mb-1">{card.name}</h3>
+                                            <p className="text-[10px] text-slate-500 mb-2"><i className="fas fa-folder-open mr-1"></i>{card.album}</p>
+                                        </div>
+                                        <div className="flex justify-between items-center text-xs mt-auto">
+                                            <span className="text-slate-500 truncate max-w-[50%]">{card.rarity}</span>
+                                            <span className="font-bold text-green-400">€ {card.price.toFixed(2)}</span>
+                                        </div>
                                     </div>
                                 </div>
-                                <div className="p-2 flex-1 flex flex-col justify-between">
-                                    <div>
-                                        <h3 className="font-bold text-xs truncate text-slate-200 mb-1">{card.name}</h3>
-                                        <p className="text-[10px] text-slate-500 flex items-center gap-1">
-                                            <i className="fas fa-folder-open"></i> {card.album}
-                                        </p>
-                                    </div>
-                                </div>
-                                <div className="bg-slate-900/70 border-t border-slate-700 px-2.5 py-1.5 flex justify-between items-center text-xs">
-                                    <span className="text-slate-400 truncate max-w-[50%]">{card.rarity}</span>
-                                    <span className="font-bold text-green-400">€ {card.price.toFixed(2)}</span>
-                                </div>
-                            </div>
-                        ))}
+                            ))
+                        ) : (
+                            <div className="col-span-full text-center py-12 text-slate-500"><i className="fas fa-ghost text-3xl mb-2 opacity-50"></i><p>Nessuna carta trovata.</p></div>
+                        )}
                     </div>
 
-                    {/* 🆕 COMPONENTE MODALE FULL-SCREEN E SWIPE */}
+                    {/* COMPONENTE MODALE FULL-SCREEN E SWIPE */}
                     {selectedCard && (
                         <div 
                             className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-sm transition-opacity duration-300" 
@@ -253,7 +246,7 @@
                             onTouchEnd={handleTouchEnd}
                         >
                             <div 
-                                className="relative w-[90%] max-w-sm sm:max-w-md lg:max-w-lg transition-transform duration-300 ease-out scale-100 modal-slide-transition" 
+                                className={`relative w-[90%] max-w-sm sm:max-w-md lg:max-w-lg transition-transform duration-300 ease-out scale-100`} 
                                 onClick={(e) => e.stopPropagation()} 
                             >
                                 {/* Pulsante Precedente */}
@@ -267,13 +260,21 @@
                                     </button>
                                 )}
 
-                                {/* Immagine */}
+                                {/* 🆕 IMMAGINE CON ANIMAZIONE DI DISSOLVENZA */}
                                 <img 
-                                    key={selectedCard.id} // Forza il re-render per l'animazione di entrata
                                     src={selectedCard.image}
-                                    className={`w-full h-auto rounded-xl shadow-2xl border-4 border-slate-700 ${isAnimating ? 'opacity-0 scale-95' : 'opacity-100 scale-100'}`}
+                                    className={`w-full h-auto rounded-xl shadow-2xl border-4 border-slate-700 card-image-transition ${isAnimating ? 'opacity-0' : 'opacity-100'}`}
                                     alt={selectedCard.name}
                                 />
+                                {/* 🆕 Se una carta è in transizione, la mostriamo momentaneamente dietro */}
+                                {transitioningCard && (
+                                    <img
+                                        src={transitioningCard.image}
+                                        className="w-full h-auto rounded-xl shadow-2xl border-4 border-slate-700 absolute inset-0 card-image-transition opacity-0"
+                                        alt={transitioningCard.name}
+                                        style={{ zIndex: -1 }} // La mettiamo dietro
+                                    />
+                                )}
                                 
                                 {/* Pulsante Successivo */}
                                 {hasNext && (
