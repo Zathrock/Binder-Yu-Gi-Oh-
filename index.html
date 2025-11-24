@@ -24,6 +24,8 @@
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .loader { border: 3px solid #1e293b; border-top: 3px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        /* 🆕 TRANSITION CUSTOM (per il modale) */
+        .modal-slide-transition { transition: transform 0.3s ease-out, opacity 0.3s ease-out; }
     </style>
 </head>
 <body>
@@ -31,7 +33,7 @@
 
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
-
+        
         // --- CONFIGURAZIONE ---
         const SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSw14WsxTtuS_D8MBMlP69c-5zVexJqQgl50_IEJQhwjOHVYluB9ob9OwEbJBy5IylkEmhItKQQPv17/pub?gid=1465139041&single=true&output=csv"; 
 
@@ -41,24 +43,113 @@
             const [error, setError] = useState(null);
             const [searchTerm, setSearchTerm] = useState("");
             const [activeAlbum, setActiveAlbum] = useState("Tutti");
-            // 🆕 NUOVO STATO: per il modale
             const [selectedCard, setSelectedCard] = useState(null); 
+            // 🆕 NUOVI STATI PER ANIMAZIONE SWIPE
+            const [swipeStart, setSwipeStart] = useState(null);
+            const [isAnimating, setIsAnimating] = useState(false);
 
+            // Logica Filtri (Necessaria per la navigazione)
+            const albumList = useMemo(() => {
+                const counts = {};
+                cards.forEach(card => {
+                    const name = card.album || "Da Ordinare";
+                    counts[name] = (counts[name] || 0) + 1;
+                });
+                const albums = Object.keys(counts).filter(a => a);
+                counts["Tutti"] = cards.length; 
+                return { albumList: ["Tutti", ...albums.sort()], albumCounts: counts };
+            }, [cards]);
+
+            const filteredCards = cards.filter(card => {
+                const matchesAlbum = activeAlbum === "Tutti" || card.album === activeAlbum;
+                const matchesSearch = card.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                                      card.code.toLowerCase().includes(searchTerm.toLowerCase());
+                return matchesAlbum && matchesSearch;
+            });
+            
+            // 🆕 Calcolo Indice e Navigazione
+            const currentIndex = useMemo(() => {
+                if (!selectedCard) return -1;
+                return filteredCards.findIndex(c => c.id === selectedCard.id);
+            }, [selectedCard, filteredCards]);
+            
+            const hasPrev = currentIndex > 0;
+            const hasNext = currentIndex < filteredCards.length - 1 && currentIndex !== -1;
+
+            const totalValue = useMemo(() => filteredCards.reduce((acc, c) => acc + c.price, 0).toFixed(2), [filteredCards]);
+
+            // Funzione di Navigazione con Animazione
+            const navigateCard = (direction) => {
+                if (isAnimating) return; 
+
+                const newIndex = currentIndex + direction;
+                if (newIndex >= 0 && newIndex < filteredCards.length) {
+                    setIsAnimating(true);
+                    
+                    // Applica l'animazione di uscita (slide destra/sinistra)
+                    const directionClass = direction > 0 ? 'translate-x-full opacity-0' : '-translate-x-full opacity-0';
+                    const newCard = filteredCards[newIndex];
+
+                    setTimeout(() => {
+                        setSelectedCard(newCard);
+                        // Rimuovi la classe dopo che il rendering è avvenuto
+                        setTimeout(() => setIsAnimating(false), 50); 
+                    }, 300); // Durata della transizione CSS
+                    
+                    // La classe di uscita è complessa da applicare direttamente in React senza ref/componenti separati
+                    // Useremo una logica più semplice: disattiviamo il bottone e aggiorniamo lo stato
+                    setSelectedCard(null); // Chiude per forzare l'uscita
+                    setTimeout(() => {
+                        setSelectedCard(newCard); // Riapre con la nuova carta
+                        setIsAnimating(false);
+                    }, 10);
+                }
+            };
+            
+            // 🆕 GESTIONE SWIPE
+            const handleTouchStart = (e) => {
+                if (!selectedCard) return;
+                setSwipeStart(e.targetTouches[0].clientX);
+            };
+
+            const handleTouchEnd = (e) => {
+                if (!swipeStart || isAnimating) return;
+                const touchEnd = e.changedTouches[0].clientX;
+                const swipeDistance = touchEnd - swipeStart;
+                const threshold = 50; // Distanza minima per considerare uno swipe
+
+                if (swipeDistance > threshold && hasPrev) { // Swipe verso destra (Precedente)
+                    navigateCard(-1);
+                } else if (swipeDistance < -threshold && hasNext) { // Swipe verso sinistra (Successivo)
+                    navigateCard(1);
+                }
+                setSwipeStart(null);
+            };
+
+            // 🆕 SCROLL LOCK (Blocca lo scroll del body quando il modale è aperto)
             useEffect(() => {
+                if (selectedCard) {
+                    document.body.style.overflow = 'hidden';
+                } else {
+                    document.body.style.overflow = '';
+                }
+                return () => { document.body.style.overflow = ''; };
+            }, [selectedCard]);
+            // ------------------------------------------------------------------------
+
+            useEffect(() => { 
                 const fetchCards = async () => {
                     try {
                         const response = await fetch(SHEET_URL);
+                        // ... logica di fetching e parsing ...
                         if (!response.ok) throw new Error("Errore connessione foglio");
                         const csvText = await response.text();
-
                         Papa.parse(csvText, {
-                            header: true,
-                            skipEmptyLines: true,
+                            header: true, skipEmptyLines: true,
                             complete: (results) => {
                                 const parsedCards = results.data.map((row, index) => {
                                     let rawPrice = row["Prezzo singolo (€)"] || "0";
                                     rawPrice = rawPrice.replace("€", "").replace(",", ".").trim();
-                                    
                                     return {
                                         id: index,
                                         name: row["Nome Carta"] || "Senza Nome",
@@ -69,7 +160,6 @@
                                         album: row["album"] || "Da Ordinare"
                                     };
                                 }).filter(c => c.name !== "Senza Nome" && c.image !== ""); 
-                                
                                 setCards(parsedCards);
                                 setLoading(false);
                                 localStorage.setItem('binderCache_v2', JSON.stringify(parsedCards));
@@ -91,33 +181,7 @@
                 fetchCards();
             }, []);
 
-            const { albumList, albumCounts } = useMemo(() => {
-                const counts = {};
-                cards.forEach(card => {
-                    const name = card.album || "Da Ordinare";
-                    counts[name] = (counts[name] || 0) + 1;
-                });
-                
-                const albums = Object.keys(counts).filter(a => a);
-                const sortedAlbumList = ["Tutti", ...albums.sort()];
-                counts["Tutti"] = cards.length; 
-
-                return { albumList: sortedAlbumList, albumCounts: counts };
-            }, [cards]);
-
-            const filteredCards = cards.filter(card => {
-                const matchesAlbum = activeAlbum === "Tutti" || card.album === activeAlbum;
-                const matchesSearch = 
-                    card.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                    card.code.toLowerCase().includes(searchTerm.toLowerCase());
-                return matchesAlbum && matchesSearch;
-            });
-
-            const totalValue = useMemo(() => filteredCards.reduce((acc, c) => acc + c.price, 0).toFixed(2), [filteredCards]);
-
-            // Schermate di Caricamento
-            if (loading) return <div className="min-h-screen flex flex-col gap-4 items-center justify-center text-slate-400"><div className="loader"></div><p>Leggo il Raccoglitore...</p></div>;
-            if (error) return <div className="min-h-screen flex items-center justify-center text-red-400 p-6 text-center"><p><i className="fas fa-exclamation-circle text-2xl mb-2 block"></i>{error}</p></div>;
+            if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-400"><div className="loader"></div></div>;
 
             return (
                 <div className="min-h-screen pb-6 flex flex-col">
@@ -138,13 +202,13 @@
                         </div>
                         <div className="border-t border-slate-800 bg-slate-900/50">
                             <div className="max-w-4xl mx-auto flex overflow-x-auto no-scrollbar py-2 px-4 gap-2">
-                                {albumList.map(name => (
+                                {albumList.albumList.map(name => (
                                     <button key={name} onClick={() => setActiveAlbum(name)}
                                         className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-2 ${activeAlbum === name ? "bg-blue-600 text-white shadow-lg shadow-blue-900/50" : "bg-slate-800 text-slate-400 border border-slate-700"}`}>
                                         
                                         {name}
                                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${activeAlbum === name ? "bg-white text-blue-600" : "bg-slate-700 text-slate-300"}`}>
-                                            {albumCounts[name] || 0}
+                                            {albumList.albumCounts[name] || 0}
                                         </span>
                                     </button>
                                 ))}
@@ -156,7 +220,6 @@
                     <div className="max-w-4xl mx-auto p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                         {filteredCards.map(card => (
                             <div key={card.id} 
-                                // 🆕 AGGIUNTO IL GESTORE CLICK per aprire il modale
                                 onClick={() => setSelectedCard(card)} 
                                 className="card-hover bg-slate-800 rounded-lg overflow-hidden border border-slate-700 shadow-md flex flex-col relative group transition-all duration-300 cursor-pointer">
                                 <div className="relative aspect-[2/3] overflow-hidden">
@@ -181,27 +244,51 @@
                         ))}
                     </div>
 
-                    {/* 🆕 COMPONENTE MODALE FULL-SCREEN */}
+                    {/* 🆕 COMPONENTE MODALE FULL-SCREEN E SWIPE */}
                     {selectedCard && (
-                        // Il wrapper gestisce l'effetto fade-in/fade-out cliccando fuori
                         <div 
                             className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-sm transition-opacity duration-300" 
                             onClick={() => setSelectedCard(null)}
+                            onTouchStart={handleTouchStart}
+                            onTouchEnd={handleTouchEnd}
                         >
                             <div 
-                                // Il contenuto del modale gestisce l'animazione e impedisce la chiusura cliccando sull'immagine
-                                className="relative w-[90%] max-w-sm sm:max-w-md lg:max-w-lg transition-transform duration-300 ease-out scale-100" 
+                                className="relative w-[90%] max-w-sm sm:max-w-md lg:max-w-lg transition-transform duration-300 ease-out scale-100 modal-slide-transition" 
                                 onClick={(e) => e.stopPropagation()} 
                             >
+                                {/* Pulsante Precedente */}
+                                {hasPrev && (
+                                    <button 
+                                        onClick={(e) => {e.stopPropagation(); navigateCard(-1);}}
+                                        disabled={isAnimating}
+                                        className="absolute left-[-10px] sm:left-[-60px] top-1/2 transform -translate-y-1/2 text-white text-4xl opacity-70 hover:opacity-100 transition-opacity p-3 bg-black/50 rounded-full hidden sm:block z-20"
+                                    >
+                                        <i className="fas fa-chevron-left"></i>
+                                    </button>
+                                )}
+
+                                {/* Immagine */}
                                 <img 
+                                    key={selectedCard.id} // Forza il re-render per l'animazione di entrata
                                     src={selectedCard.image}
-                                    className="w-full h-auto rounded-xl shadow-2xl border-4 border-slate-700 transition-transform duration-300" 
+                                    className={`w-full h-auto rounded-xl shadow-2xl border-4 border-slate-700 ${isAnimating ? 'opacity-0 scale-95' : 'opacity-100 scale-100'}`}
                                     alt={selectedCard.name}
                                 />
                                 
+                                {/* Pulsante Successivo */}
+                                {hasNext && (
+                                    <button 
+                                        onClick={(e) => {e.stopPropagation(); navigateCard(1);}}
+                                        disabled={isAnimating}
+                                        className="absolute right-[-10px] sm:right-[-60px] top-1/2 transform -translate-y-1/2 text-white text-4xl opacity-70 hover:opacity-100 transition-opacity p-3 bg-black/50 rounded-full hidden sm:block z-20"
+                                    >
+                                        <i className="fas fa-chevron-right"></i>
+                                    </button>
+                                )}
+
                                 {/* Pulsante di chiusura (X) */}
                                 <button 
-                                    className="absolute top-4 right-4 text-white text-4xl opacity-70 hover:opacity-100 transition-opacity p-2 bg-black/50 rounded-full" 
+                                    className="absolute top-4 right-4 text-white text-4xl opacity-70 hover:opacity-100 transition-opacity p-2 bg-black/50 rounded-full z-20" 
                                     onClick={() => setSelectedCard(null)}
                                     aria-label="Chiudi"
                                 >
