@@ -21,7 +21,6 @@
         .card-hover:active { transform: scale(0.98); }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-        /* Animazione caricamento */
         .loader { border: 3px solid #1e293b; border-top: 3px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
@@ -93,12 +92,24 @@
                 fetchCards();
             }, []);
 
-            // Logica Filtri
-            const albumList = useMemo(() => {
-                // Crea lista album unici e puliti
-                const albums = new Set(cards.map(c => c.album).filter(a => a));
-                return ["Tutti", ...Array.from(albums).sort()];
+            // 🆕 CALCOLA IL CONTEGGIO DELLE CARTE PER OGNI ALBUM
+            const { albumList, albumCounts } = useMemo(() => {
+                const counts = {};
+                cards.forEach(card => {
+                    const name = card.album || "Da Ordinare";
+                    counts[name] = (counts[name] || 0) + 1;
+                });
+                
+                const albums = Object.keys(counts).filter(a => a);
+                
+                const sortedAlbumList = ["Tutti", ...albums.sort()];
+                
+                // Aggiunge il totale generale per "Tutti"
+                counts["Tutti"] = cards.length; 
+
+                return { albumList: sortedAlbumList, albumCounts: counts };
             }, [cards]);
+            // ----------------------------------------------------
 
             const filteredCards = cards.filter(card => {
                 const matchesAlbum = activeAlbum === "Tutti" || card.album === activeAlbum;
@@ -122,7 +133,6 @@
                             <div className="flex justify-between items-center mb-3">
                                 <h1 className="text-xl font-bold text-blue-400 flex items-center gap-2"><i className="fas fa-layer-group"></i> Binder</h1>
                                 <div className="bg-slate-800 px-3 py-1 rounded-lg border border-slate-700">
-                                    <span className="text-xs text-slate-400 mr-2">Totale:</span>
                                     <span className="font-bold text-green-400">€ {totalValue}</span>
                                 </div>
                             </div>
@@ -137,8 +147,13 @@
                             <div className="max-w-4xl mx-auto flex overflow-x-auto no-scrollbar py-2 px-4 gap-2">
                                 {albumList.map(name => (
                                     <button key={name} onClick={() => setActiveAlbum(name)}
-                                        className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-bold transition-all ${activeAlbum === name ? "bg-blue-600 text-white shadow-lg shadow-blue-900/50" : "bg-slate-800 text-slate-400 border border-slate-700"}`}>
+                                        className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-2 ${activeAlbum === name ? "bg-blue-600 text-white shadow-lg shadow-blue-900/50" : "bg-slate-800 text-slate-400 border border-slate-700"}`}>
+                                        
                                         {name}
+                                        {/* 🆕 VISUALIZZA IL CONTEGGIO */}
+                                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${activeAlbum === name ? "bg-white text-blue-600" : "bg-slate-700 text-slate-300"}`}>
+                                            {albumCounts[name] || 0}
+                                        </span>
                                     </button>
                                 ))}
                             </div>
