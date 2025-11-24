@@ -18,6 +18,10 @@
 
     <style>
         body { background-color: #0f172a; color: #e2e8f0; font-family: sans-serif; -webkit-tap-highlight-color: transparent; }
+        .card-hover:active { transform: scale(0.98); }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        /* Animazione caricamento */
         .loader { border: 3px solid #1e293b; border-top: 3px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
@@ -28,116 +32,112 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
-        // --- ⚠️ CONFIGURAZIONE ⚠️ ---
-        const SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT2HEULwdZocfgc5rp-WQg7brGpZMv3Hq-bG90nwwgG1emdd2WI8M6TLrL29eqSPwf5q7aoAqELzYr8/pub?gid=1465139041&single=true&output=csv"; 
-        const API_URL = "https://script.google.com/macros/s/AKfycbwRidCGXfCjKlMD2HyUszIVJ3t6f09wAf1DKB9LxzD0U5kw3aQVMXIMvamztNhkyy0K/exec"; 
+        // --- CONFIGURAZIONE ---
+        // Il tuo link Google Fogli CSV
+        const SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSw14WsxTtuS_D8MBMlP69c-5zVexJqQgl50_IEJQhwjOHVYluB9ob9OwEbJBy5IylkEmhItKQQPv17/pub?gid=1465139041&single=true&output=csv"; 
 
         const App = () => {
             const [cards, setCards] = useState([]);
             const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
             const [searchTerm, setSearchTerm] = useState("");
             const [activeAlbum, setActiveAlbum] = useState("Tutti");
-            
-            const [showModal, setShowModal] = useState(false);
-            const [newCardName, setNewCardName] = useState("");
-            const [newCardCode, setNewCardCode] = useState(""); // NUOVO CAMPO
-            const [newCardAlbum, setNewCardAlbum] = useState("");
-            const [isSubmitting, setIsSubmitting] = useState(false);
 
-            useEffect(() => { fetchData(); }, []);
+            useEffect(() => {
+                const fetchCards = async () => {
+                    try {
+                        const response = await fetch(SHEET_URL);
+                        if (!response.ok) throw new Error("Errore connessione foglio");
+                        const csvText = await response.text();
 
-            const fetchData = async () => {
-                try {
-                    const response = await fetch(SHEET_CSV_URL);
-                    const csvText = await response.text();
-                    Papa.parse(csvText, {
-                        header: true, skipEmptyLines: true,
-                        complete: (results) => {
-                            const parsed = results.data.map((row, i) => ({
-                                id: i,
-                                name: row["Nome Carta"] || "---",
-                                code: row["Codice Set"] || "---",
-                                rarity: row["Rarità"] || "",
-                                price: parseFloat((row["Prezzo singolo (€)"] || "0").replace("€", "").replace(",", ".").trim()) || 0,
-                                image: (row["Immagine"] || "").replace("cards_small", "cards"),
-                                album: row["album"] || "Da Ordinare"
-                            })).filter(c => c.name !== "---");
-                            setCards(parsed);
+                        Papa.parse(csvText, {
+                            header: true,
+                            skipEmptyLines: true,
+                            complete: (results) => {
+                                // MAPPATURA ESATTA DELLE TUE COLONNE
+                                const parsedCards = results.data.map((row, index) => {
+                                    // Pulizia Prezzo: toglie "€ " e cambia virgola in punto
+                                    let rawPrice = row["Prezzo singolo (€)"] || "0";
+                                    rawPrice = rawPrice.replace("€", "").replace(",", ".").trim();
+                                    
+                                    return {
+                                        id: index,
+                                        name: row["Nome Carta"] || "Senza Nome",
+                                        code: row["Codice Set"] || "---",
+                                        rarity: row["Rarità"] || "",
+                                        price: parseFloat(rawPrice) || 0,
+                                        // Corregge immagine per averla in HD
+                                        image: (row["Immagine"] || "").replace("cards_small", "cards"),
+                                        album: row["album"] || "Da Ordinare"
+                                    };
+                                }).filter(c => c.name !== "Senza Nome" && c.image !== ""); 
+                                
+                                setCards(parsedCards);
+                                setLoading(false);
+                                localStorage.setItem('binderCache_v2', JSON.stringify(parsedCards));
+                            },
+                            error: () => { throw new Error("Errore lettura CSV"); }
+                        });
+                    } catch (err) {
+                        console.log("Errore o offline, uso cache:", err);
+                        const cached = localStorage.getItem('binderCache_v2');
+                        if (cached) {
+                            setCards(JSON.parse(cached));
+                            setLoading(false);
+                        } else {
+                            setError("Impossibile caricare le carte. Controlla la connessione internet.");
                             setLoading(false);
                         }
-                    });
-                } catch (e) { setLoading(false); }
-            };
+                    }
+                };
+                fetchCards();
+            }, []);
 
+            // Logica Filtri
             const albumList = useMemo(() => {
+                // Crea lista album unici e puliti
                 const albums = new Set(cards.map(c => c.album).filter(a => a));
                 return ["Tutti", ...Array.from(albums).sort()];
             }, [cards]);
 
             const filteredCards = cards.filter(card => {
                 const matchesAlbum = activeAlbum === "Tutti" || card.album === activeAlbum;
-                const matchesSearch = card.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                                      card.code.toLowerCase().includes(searchTerm.toLowerCase());
+                const matchesSearch = 
+                    card.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                    card.code.toLowerCase().includes(searchTerm.toLowerCase());
                 return matchesAlbum && matchesSearch;
             });
 
             const totalValue = useMemo(() => filteredCards.reduce((acc, c) => acc + c.price, 0).toFixed(2), [filteredCards]);
 
-            const handleAddCard = async (e) => {
-                e.preventDefault();
-                setIsSubmitting(true);
-
-                try {
-                    // Manda Nome, Album E CODICE allo script
-                    const response = await fetch(API_URL, {
-                        method: "POST",
-                        mode: "no-cors",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ 
-                            cardName: newCardName, 
-                            cardCode: newCardCode, // NUOVO DATO INVIATO
-                            albumName: newCardAlbum 
-                        })
-                    });
-                    
-                    alert("Richiesta inviata! Se hai messo il codice, cercherò quella versione specifica.");
-                    
-                    setShowModal(false);
-                    setNewCardName("");
-                    setNewCardCode("");
-                    
-                    setTimeout(fetchData, 3000);
-
-                } catch (error) {
-                    alert("Errore: " + error);
-                } finally {
-                    setIsSubmitting(false);
-                }
-            };
-
-            if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-400"><div className="loader"></div></div>;
+            // Schermate di Caricamento
+            if (loading) return <div className="min-h-screen flex flex-col gap-4 items-center justify-center text-slate-400"><div className="loader"></div><p>Leggo il Raccoglitore...</p></div>;
+            if (error) return <div className="min-h-screen flex items-center justify-center text-red-400 p-6 text-center"><p><i className="fas fa-exclamation-circle text-2xl mb-2 block"></i>{error}</p></div>;
 
             return (
-                <div className="min-h-screen pb-20 flex flex-col">
-                    <div className="sticky top-0 z-40 bg-slate-900/95 border-b border-slate-800 backdrop-blur-md shadow-lg">
+                <div className="min-h-screen pb-6 flex flex-col">
+                    {/* Header */}
+                    <div className="sticky top-0 z-50 bg-slate-900/95 border-b border-slate-800 backdrop-blur-md shadow-lg">
                         <div className="max-w-4xl mx-auto px-4 py-3">
                             <div className="flex justify-between items-center mb-3">
                                 <h1 className="text-xl font-bold text-blue-400 flex items-center gap-2"><i className="fas fa-layer-group"></i> Binder</h1>
                                 <div className="bg-slate-800 px-3 py-1 rounded-lg border border-slate-700">
+                                    <span className="text-xs text-slate-400 mr-2">Totale:</span>
                                     <span className="font-bold text-green-400">€ {totalValue}</span>
                                 </div>
                             </div>
                             <div className="relative">
                                 <i className="fas fa-search absolute left-3 top-2.5 text-slate-500"></i>
-                                <input type="text" placeholder="Cerca..." className="w-full bg-slate-950 text-white rounded-lg pl-10 pr-4 py-2 border border-slate-700 focus:border-blue-500 transition-colors"
+                                <input type="text" placeholder="Cerca carta..." className="w-full bg-slate-950 text-white rounded-lg pl-10 pr-4 py-2 border border-slate-700 focus:border-blue-500 transition-colors"
                                     value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                             </div>
                         </div>
+                        {/* Tabs Album */}
                         <div className="border-t border-slate-800 bg-slate-900/50">
                             <div className="max-w-4xl mx-auto flex overflow-x-auto no-scrollbar py-2 px-4 gap-2">
                                 {albumList.map(name => (
                                     <button key={name} onClick={() => setActiveAlbum(name)}
-                                        className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-bold transition-all ${activeAlbum === name ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-400 border border-slate-700"}`}>
+                                        className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-bold transition-all ${activeAlbum === name ? "bg-blue-600 text-white shadow-lg shadow-blue-900/50" : "bg-slate-800 text-slate-400 border border-slate-700"}`}>
                                         {name}
                                     </button>
                                 ))}
@@ -145,74 +145,44 @@
                         </div>
                     </div>
 
+                    {/* Griglia Carte */}
                     <div className="max-w-4xl mx-auto p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                        {filteredCards.map(card => (
-                            <div key={card.id} className="bg-slate-800 rounded-lg overflow-hidden border border-slate-700 shadow-md flex flex-col relative group">
-                                <div className="relative aspect-[2/3] overflow-hidden">
-                                    <img src={card.image} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" loading="lazy" />
-                                    <div className="absolute bottom-1 left-1 bg-black/80 px-1.5 py-0.5 rounded text-[10px] font-bold text-white border border-slate-600">{card.code}</div>
-                                </div>
-                                <div className="p-2.5 flex-1 flex flex-col justify-between">
-                                    <h3 className="font-bold text-xs truncate text-slate-200 mb-1">{card.name}</h3>
-                                    <div className="flex justify-between items-center text-xs mt-auto">
-                                        <span className="text-slate-500 truncate max-w-[50%]">{card.album}</span>
-                                        <span className="font-bold text-green-400">€ {card.price.toFixed(2)}</span>
+                        {filteredCards.length > 0 ? (
+                            filteredCards.map(card => (
+                                <div key={card.id} className="card-hover bg-slate-800 rounded-lg overflow-hidden border border-slate-700 shadow-md flex flex-col relative group">
+                                    <div className="relative aspect-[2/3] overflow-hidden">
+                                        <img src={card.image} alt={card.name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" loading="lazy" />
+                                        <div className="absolute bottom-1 left-1 bg-black/80 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] font-bold text-white border border-slate-600 shadow-sm">
+                                            {card.code}
+                                        </div>
+                                    </div>
+                                    <div className="p-2.5 flex-1 flex flex-col justify-between">
+                                        <div>
+                                            <h3 className="font-bold text-xs truncate text-slate-200 mb-1">{card.name}</h3>
+                                            <p className="text-[10px] text-slate-500 mb-2"><i className="fas fa-folder-open mr-1"></i>{card.album}</p>
+                                        </div>
+                                        <div className="flex justify-between items-center text-xs mt-auto">
+                                            <span className="text-slate-500 truncate max-w-[50%]">{card.rarity}</span>
+                                            <span className="font-bold text-green-400">€ {card.price.toFixed(2)}</span>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        ))}
+                            ))
+                        ) : (
+                            <div className="col-span-full text-center py-12 text-slate-500"><i className="fas fa-ghost text-3xl mb-2 opacity-50"></i><p>Nessuna carta trovata.</p></div>
+                        )}
                     </div>
-
-                    <button onClick={() => setShowModal(true)} className="fixed bottom-6 right-6 bg-blue-600 hover:bg-blue-500 text-white rounded-full w-14 h-14 flex items-center justify-center shadow-2xl z-50 transition-transform active:scale-90 border-2 border-slate-800">
-                        <i className="fas fa-plus text-2xl"></i>
-                    </button>
-
-                    {showModal && (
-                        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-                            <div className="bg-slate-900 w-full max-w-sm rounded-xl border border-slate-700 p-5 shadow-2xl relative">
-                                <button onClick={() => setShowModal(false)} className="absolute top-3 right-3 text-slate-400 hover:text-white"><i className="fas fa-times text-lg"></i></button>
-                                <h2 className="text-lg font-bold text-white mb-4">Aggiungi Carta</h2>
-                                <form onSubmit={handleAddCard} className="space-y-4">
-                                    <div>
-                                        <label className="text-xs text-slate-400 block mb-1">Nome Carta (Es. Mago Nero)</label>
-                                        <input autoFocus type="text" className="w-full bg-slate-800 text-white rounded p-3 border border-slate-600 focus:border-blue-500 outline-none"
-                                            value={newCardName} onChange={e => setNewCardName(e.target.value)} required />
-                                    </div>
-                                    
-                                    {/* NUOVO CAMPO CODICE */}
-                                    <div>
-                                        <label className="text-xs text-slate-400 block mb-1">Codice Set (Es. LOB-I001) - <span className="text-yellow-500">Opzionale</span></label>
-                                        <input type="text" className="w-full bg-slate-800 text-white rounded p-3 border border-slate-600 focus:border-blue-500 outline-none uppercase"
-                                            placeholder="Se vuoto, scelgo io"
-                                            value={newCardCode} onChange={e => setNewCardCode(e.target.value)} />
-                                    </div>
-
-                                    <div>
-                                        <label className="text-xs text-slate-400 block mb-1">Album</label>
-                                        <select className="w-full bg-slate-800 text-white rounded p-3 border border-slate-600 focus:border-blue-500 outline-none mb-2"
-                                            value={newCardAlbum} onChange={e => setNewCardAlbum(e.target.value)}>
-                                            <option value="">-- Seleziona --</option>
-                                            {albumList.filter(a => a !== "Tutti").map(a => <option key={a} value={a}>{a}</option>)}
-                                        </select>
-                                        <input type="text" placeholder="Oppure nuovo..." className="w-full bg-slate-800 text-white rounded p-3 border border-slate-600 outline-none text-sm"
-                                            value={newCardAlbum} onChange={e => setNewCardAlbum(e.target.value)} required />
-                                    </div>
-                                    <button type="submit" disabled={isSubmitting} className={`w-full py-3 rounded-lg font-bold text-white transition-all ${isSubmitting ? 'bg-slate-600' : 'bg-green-600 hover:bg-green-500'}`}>
-                                        {isSubmitting ? <i className="fas fa-spinner fa-spin"></i> : "Cerca e Aggiungi"}
-                                    </button>
-                                </form>
-                            </div>
-                        </div>
-                    )}
                 </div>
             );
         };
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
-    <script>if ('serviceWorker' in navigator) { window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js')); }</script>
+
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
+        }
+    </script>
 </body>
-
 </html>
-
-
