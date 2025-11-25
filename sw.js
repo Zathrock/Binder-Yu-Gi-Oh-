@@ -1,4 +1,4 @@
-const CACHE_NAME = "binder-shell-v17";
+const CACHE_NAME = "binder-shell-v18";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -43,7 +43,6 @@ self.addEventListener("fetch", (e) => {
   );
 
 });
-
 
 
 
