@@ -1,4 +1,4 @@
-const CACHE_NAME = "binder-shell-v18";
+const CACHE_NAME = "binder-shell-v19";
 const APP_SHELL = [
   "./",
   "./index.html",
