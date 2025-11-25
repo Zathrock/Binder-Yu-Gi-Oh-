@@ -25,6 +25,13 @@
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         /* Transizione per lo switch immagine (Next/Prev) */
         .card-image-transition { transition: opacity 0.3s ease-in-out; }
+        
+        /* Animazione Fade-In per il menu filtri */
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in-down { animation: fadeInDown 0.2s ease-out forwards; }
     </style>
 </head>
 <body>
@@ -48,8 +55,11 @@
             
             // --- STATI FILTRI ---
             const [activeAlbum, setActiveAlbum] = useState("Tutti");
-            const [activeRarity, setActiveRarity] = useState("Tutte"); // 🆕 Nuovo stato Rarità
-            const [showFilters, setShowFilters] = useState(false); // 🆕 Toggle menu filtri
+            const [activeRarity, setActiveRarity] = useState("Tutte"); 
+            const [showFilters, setShowFilters] = useState(false); 
+
+            // --- STATO VISUALIZZAZIONE (Grid, Compact, List) ---
+            const [viewMode, setViewMode] = useState("grid"); 
 
             // --- STATI PER IL MODALE E LE ANIMAZIONI ---
             const [selectedCard, setSelectedCard] = useState(null); 
@@ -77,13 +87,13 @@
                 return { 
                     albumList: ["Tutti", ...albums.sort()], 
                     albumCounts: albumCounts,
-                    rarityList: ["Tutte", ...Array.from(raritySet).sort()] // Lista rarità unica
+                    rarityList: ["Tutte", ...Array.from(raritySet).sort()]
                 };
             }, [cards]);
 
             const filteredCards = cards.filter(card => {
                 const matchesAlbum = activeAlbum === "Tutti" || card.album === activeAlbum;
-                const matchesRarity = activeRarity === "Tutte" || card.rarity === activeRarity; // 🆕 Check Rarità
+                const matchesRarity = activeRarity === "Tutte" || card.rarity === activeRarity;
                 const matchesSearch = card.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
                                       card.code.toLowerCase().includes(searchTerm.toLowerCase());
                 return matchesAlbum && matchesSearch && matchesRarity;
@@ -99,6 +109,23 @@
             const hasNext = currentIndex < filteredCards.length - 1 && currentIndex !== -1;
 
             const totalValue = useMemo(() => filteredCards.reduce((acc, c) => acc + c.price, 0).toFixed(2), [filteredCards]);
+
+            // --- CAMBIO VISUALIZZAZIONE ---
+            const cycleViewMode = () => {
+                if (viewMode === 'grid') setViewMode('compact');
+                else if (viewMode === 'compact') setViewMode('list');
+                else setViewMode('grid');
+            };
+
+            // Icona dinamica per il titolo
+            const getTitleIcon = () => {
+                switch(viewMode) {
+                    case 'grid': return 'fa-th-large'; 
+                    case 'compact': return 'fa-th';       
+                    case 'list': return 'fa-list';        
+                    default: return 'fa-layer-group';
+                }
+            };
 
             // --- GESTIONE APERTURA/CHIUSURA CON ZOOM ---
             const openModal = (card) => {
@@ -152,7 +179,6 @@
                 setSwipeStart(null);
             };
 
-            // SCROLL LOCK
             useEffect(() => {
                 if (selectedCard) {
                     document.body.style.overflow = 'hidden';
@@ -261,13 +287,27 @@
                 </div>
             );
 
+            // Determina le classi della griglia in base alla View Mode
+            const getGridClass = () => {
+                if (viewMode === 'list') return "grid-cols-1";
+                if (viewMode === 'compact') return "grid-cols-3 sm:grid-cols-4 md:grid-cols-6";
+                return "grid-cols-2 sm:grid-cols-3 md:grid-cols-4"; // Default 'grid'
+            };
+
             return (
                 <div className="min-h-screen pb-6 flex flex-col">
                     {/* Header */}
                     <div className="sticky top-0 z-40 bg-slate-900/95 border-b border-slate-800 backdrop-blur-md shadow-lg">
                         <div className="max-w-4xl mx-auto px-4 py-3">
                             <div className="flex justify-between items-center mb-3">
-                                <h1 className="text-xl font-bold text-blue-400 flex items-center gap-2"><i className="fas fa-layer-group"></i> Binder</h1>
+                                {/* TITOLO CLICCABILE PER CAMBIARE VIEW */}
+                                <h1 
+                                    onClick={cycleViewMode}
+                                    className="text-xl font-bold text-blue-400 flex items-center gap-2 cursor-pointer select-none active:scale-95 transition-transform"
+                                    title="Cambia visualizzazione"
+                                >
+                                    <i className={`fas ${getTitleIcon()}`}></i> Binder
+                                </h1>
                                 <div className="bg-slate-800 px-3 py-1 rounded-lg border border-slate-700">
                                     <span className="font-bold text-green-400">€ {totalValue}</span>
                                 </div>
@@ -288,7 +328,7 @@
                                 </button>
                             </div>
 
-                            {/* 🆕 MENU FILTRI (Dropdown) */}
+                            {/* MENU FILTRI */}
                             {showFilters && (
                                 <div className="mt-2 bg-slate-800 border border-slate-700 rounded-lg p-3 shadow-xl animate-fade-in-down">
                                     <div className="grid grid-cols-2 gap-3">
@@ -327,10 +367,9 @@
                                     </div>
                                 </div>
                             )}
-
                         </div>
                         
-                        {/* Lista Album Orizzontale (Sincronizzata) */}
+                        {/* Lista Album Orizzontale */}
                         <div className="border-t border-slate-800 bg-slate-900/50">
                             <div className="max-w-4xl mx-auto flex overflow-x-auto no-scrollbar py-2 px-4 gap-2">
                                 {filterData.albumList.map(name => (
@@ -347,37 +386,45 @@
                         </div>
                     </div>
 
-                    {/* Griglia Carte */}
-                    <div className="max-w-4xl mx-auto p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                    {/* GRIGLIA CARTE DINAMICA */}
+                    <div className={`max-w-4xl mx-auto p-4 grid gap-3 ${getGridClass()}`}>
                         {filteredCards.length > 0 ? (
                             filteredCards.map(card => (
                                 <div key={card.id} 
                                     onClick={() => openModal(card)} 
-                                    className="card-hover bg-slate-800 rounded-lg overflow-hidden border border-slate-700 shadow-md flex flex-col relative group transition-all duration-300 ease-in-out cursor-pointer hover:shadow-xl hover:shadow-blue-500/50 hover:border-blue-400/50">
-                                    <div className="relative aspect-[2/3] overflow-hidden">
+                                    className={`card-hover bg-slate-800 rounded-lg overflow-hidden border border-slate-700 shadow-md relative group transition-all duration-300 ease-in-out cursor-pointer hover:shadow-xl hover:shadow-blue-500/50 hover:border-blue-400/50 
+                                        ${viewMode === 'list' ? 'flex flex-row h-24' : 'flex flex-col'}`}
+                                >
+                                    {/* Immagine */}
+                                    <div className={`relative overflow-hidden ${viewMode === 'list' ? 'w-20 min-w-[5rem]' : 'aspect-[2/3]'}`}>
                                         <img src={card.image} alt={card.name} className="w-full h-full object-cover transition-transform duration-500" loading="lazy" />
+                                        {/* Badge codice (Nascosto in lista se troppo piccolo, o riposizionato) */}
                                         <div className="absolute bottom-1 left-1 bg-black/80 px-1.5 py-0.5 rounded text-[10px] font-bold text-white border border-slate-600">
                                             {card.code}
                                         </div>
                                     </div>
-                                    <div className="p-2.5 flex-1 flex flex-col justify-between">
+                                    
+                                    {/* Contenuto Testuale */}
+                                    <div className="p-2.5 flex-1 flex flex-col justify-between overflow-hidden">
                                         <div>
-                                            <h3 className="font-bold text-xs truncate text-slate-200 mb-1">{card.name}</h3>
-                                            <p className="text-[10px] text-slate-500 mb-2"><i className="fas fa-folder-open mr-1"></i>{card.album}</p>
+                                            <h3 className={`font-bold text-slate-200 mb-1 truncate ${viewMode === 'compact' ? 'text-[10px]' : 'text-xs'}`}>{card.name}</h3>
+                                            <p className="text-[10px] text-slate-500 mb-2 truncate">
+                                                <i className="fas fa-folder-open mr-1"></i>{card.album}
+                                            </p>
                                         </div>
                                         <div className="flex justify-between items-center text-xs mt-auto">
-                                            <span className="text-slate-500 truncate max-w-[50%]">{card.rarity}</span>
-                                            <span className="font-bold text-green-400">€ {card.price.toFixed(2)}</span>
+                                            <span className={`text-slate-500 truncate max-w-[50%] ${viewMode === 'compact' ? 'text-[9px]' : ''}`}>{card.rarity}</span>
+                                            <span className={`font-bold text-green-400 ${viewMode === 'compact' ? 'text-[10px]' : ''}`}>€ {card.price.toFixed(2)}</span>
                                         </div>
                                     </div>
                                 </div>
                             ))
                         ) : (
-                            <div className="col-span-full text-center py-12 text-slate-500"><i className="fas fa-ghost text-3xl mb-2 opacity-50"></i><p>Nessuna carta trovata con questi filtri.</p></div>
+                            <div className="col-span-full text-center py-12 text-slate-500"><i className="fas fa-ghost text-3xl mb-2 opacity-50"></i><p>Nessuna carta trovata.</p></div>
                         )}
                     </div>
 
-                    {/* COMPONENTE MODALE FULL-SCREEN CON ZOOM IN/OUT */}
+                    {/* MODALE FULL-SCREEN */}
                     {selectedCard && (
                         <div 
                             className={`fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-sm transition-opacity duration-300 ${isVisible ? 'opacity-100' : 'opacity-0'}`} 
@@ -389,7 +436,6 @@
                                 className={`relative w-[90%] max-w-sm sm:max-w-md lg:max-w-lg transition-transform duration-300 ease-out ${isVisible ? 'scale-100' : 'scale-90'}`} 
                                 onClick={(e) => e.stopPropagation()} 
                             >
-                                {/* Pulsante Precedente */}
                                 {hasPrev && (
                                     <button 
                                         onClick={(e) => {e.stopPropagation(); navigateCard(-1);}}
@@ -400,13 +446,11 @@
                                     </button>
                                 )}
 
-                                {/* Immagine con Transizione */}
                                 <img 
                                     src={selectedCard.image}
                                     className={`w-full h-auto rounded-xl shadow-2xl border-4 border-slate-700 card-image-transition ${isAnimating ? 'opacity-0' : 'opacity-100'}`}
                                     alt={selectedCard.name}
                                 />
-                                {/* Ghost Card per animazione Next/Prev */}
                                 {transitioningCard && (
                                     <img
                                         src={transitioningCard.image}
@@ -416,7 +460,6 @@
                                     />
                                 )}
                                 
-                                {/* Pulsante Successivo */}
                                 {hasNext && (
                                     <button 
                                         onClick={(e) => {e.stopPropagation(); navigateCard(1);}}
@@ -427,7 +470,6 @@
                                     </button>
                                 )}
 
-                                {/* Pulsante di chiusura (X) */}
                                 <button 
                                     className="absolute top-4 right-4 text-white text-4xl opacity-70 hover:opacity-100 transition-opacity p-2 bg-black/50 rounded-full z-20" 
                                     onClick={closeModal}
@@ -436,10 +478,20 @@
                                     &times;
                                 </button>
                                 
-                                {/* Dettagli in basso */}
+                                {/* 🆕 DETTAGLI IN BASSO MODIFICATI */}
                                 <div className="mt-4 text-center text-slate-200 bg-slate-900/70 p-3 rounded-lg border border-slate-700">
                                      <h3 className="text-xl font-extrabold text-blue-400">{selectedCard.name}</h3>
-                                     <p className="text-md text-slate-400 mt-1">{selectedCard.code} - {selectedCard.rarity}</p>
+                                     
+                                     {/* 🆕 Nuova riga Album */}
+                                     <p className="text-sm text-slate-500 mt-1">
+                                        <i className="fas fa-folder-open mr-1"></i> {selectedCard.album}
+                                     </p>
+
+                                     <div className="text-md text-slate-400 mt-1 flex justify-center gap-2 items-center">
+                                         <span>{selectedCard.code}</span>
+                                         <span className="w-1 h-1 bg-slate-500 rounded-full"></span>
+                                         <span>{selectedCard.rarity}</span>
+                                     </div>
                                      <p className="text-lg text-green-400 font-bold mt-1">€ {selectedCard.price.toFixed(2)}</p>
                                 </div>
                             </div>
@@ -453,3 +505,4 @@
     </script>
 </body>
 </html>
+
