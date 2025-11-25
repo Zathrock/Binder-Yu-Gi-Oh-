@@ -23,7 +23,7 @@
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         .loader { border: 3px solid #1e293b; border-top: 3px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        /* 🆕 Animazione di dissolvenza per l'immagine del modale */
+        /* Transizione per lo switch immagine (Next/Prev) */
         .card-image-transition { transition: opacity 0.3s ease-in-out; }
     </style>
 </head>
@@ -31,40 +31,62 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo, useRef } = React; // 🆕 Aggiunto useRef
+        const { useState, useEffect, useMemo } = React; 
         
         // --- CONFIGURAZIONE ---
-        const SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSw14WsxTtuS_D8MBMlP69c-5zVexJqQgl50_IEJQhwjOHVYluB9ob9OwEbJBy5IylkEmhItKQQPv17/pub?gid=54416179&single=true&output=csv"; 
+        // Utilizziamo corsproxy.io per bypassare le restrizioni del protocollo file://
+        const ORIGINAL_SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSw14WsxTtuS_D8MBMlP69c-5zVexJqQgl50_IEJQhwjOHVYluB9ob9OwEbJBy5IylkEmhItKQQPv17/pub?gid=54416179&single=true&output=csv"; 
+        const SHEET_URL = "https://corsproxy.io/?" + encodeURIComponent(ORIGINAL_SHEET_URL);
+
+        const CACHE_KEY = 'binderCache_v2';
 
         const App = () => {
             const [cards, setCards] = useState([]);
             const [loading, setLoading] = useState(true);
             const [error, setError] = useState(null);
             const [searchTerm, setSearchTerm] = useState("");
+            
+            // --- STATI FILTRI ---
             const [activeAlbum, setActiveAlbum] = useState("Tutti");
+            const [activeRarity, setActiveRarity] = useState("Tutte"); // 🆕 Nuovo stato Rarità
+            const [showFilters, setShowFilters] = useState(false); // 🆕 Toggle menu filtri
+
+            // --- STATI PER IL MODALE E LE ANIMAZIONI ---
             const [selectedCard, setSelectedCard] = useState(null); 
+            const [isVisible, setIsVisible] = useState(false); 
+            
+            // --- STATI PER LA NAVIGAZIONE (SWIPE/NEXT) ---
             const [swipeStart, setSwipeStart] = useState(null);
             const [isAnimating, setIsAnimating] = useState(false);
-            // 🆕 NUOVO STATO: carta in transizione per l'animazione di uscita
             const [transitioningCard, setTransitioningCard] = useState(null); 
 
-            // Logica Filtri (Necessaria per la navigazione)
-            const albumList = useMemo(() => {
-                const counts = {};
+            // Logica Filtri Album e Rarità
+            const filterData = useMemo(() => {
+                const albumCounts = {};
+                const raritySet = new Set();
+
                 cards.forEach(card => {
-                    const name = card.album || "Da Ordinare";
-                    counts[name] = (counts[name] || 0) + 1;
+                    const albumName = card.album || "Da Ordinare";
+                    albumCounts[albumName] = (albumCounts[albumName] || 0) + 1;
+                    if(card.rarity) raritySet.add(card.rarity);
                 });
-                const albums = Object.keys(counts).filter(a => a);
-                counts["Tutti"] = cards.length; 
-                return { albumList: ["Tutti", ...albums.sort()], albumCounts: counts };
+                
+                const albums = Object.keys(albumCounts).filter(a => a);
+                albumCounts["Tutti"] = cards.length; 
+                
+                return { 
+                    albumList: ["Tutti", ...albums.sort()], 
+                    albumCounts: albumCounts,
+                    rarityList: ["Tutte", ...Array.from(raritySet).sort()] // Lista rarità unica
+                };
             }, [cards]);
 
             const filteredCards = cards.filter(card => {
                 const matchesAlbum = activeAlbum === "Tutti" || card.album === activeAlbum;
+                const matchesRarity = activeRarity === "Tutte" || card.rarity === activeRarity; // 🆕 Check Rarità
                 const matchesSearch = card.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
                                       card.code.toLowerCase().includes(searchTerm.toLowerCase());
-                return matchesAlbum && matchesSearch;
+                return matchesAlbum && matchesSearch && matchesRarity;
             });
             
             // Calcolo Indice e Navigazione
@@ -78,22 +100,35 @@
 
             const totalValue = useMemo(() => filteredCards.reduce((acc, c) => acc + c.price, 0).toFixed(2), [filteredCards]);
 
-            // 🆕 FUNZIONE DI NAVIGAZIONE CON ANIMAZIONE DI DISSOLVENZA
+            // --- GESTIONE APERTURA/CHIUSURA CON ZOOM ---
+            const openModal = (card) => {
+                setSelectedCard(card);
+                setTimeout(() => setIsVisible(true), 10);
+            };
+
+            const closeModal = () => {
+                setIsVisible(false); 
+                setTimeout(() => {
+                    setSelectedCard(null); 
+                    setTransitioningCard(null);
+                    setIsAnimating(false);
+                }, 300); 
+            };
+
+            // --- NAVIGAZIONE CARTE (DISSOLVENZA) ---
             const navigateCard = (direction) => {
                 if (isAnimating) return; 
 
                 const newIndex = currentIndex + direction;
                 if (newIndex >= 0 && newIndex < filteredCards.length) {
-                    setIsAnimating(true); // Inizio animazione
-                    setTransitioningCard(selectedCard); // Metti la carta corrente in stato di transizione
+                    setIsAnimating(true);
+                    setTransitioningCard(selectedCard);
 
-                    // Avvia la dissolvenza della carta corrente
                     setTimeout(() => {
-                        setSelectedCard(filteredCards[newIndex]); // Imposta la nuova carta (appaiono nascoste inizialmente)
-                        setTransitioningCard(null); // Rimuovi la carta in transizione
-                        // Dopo un breve ritardo per permettere al DOM di aggiornarsi, rimuovi lo stato di animazione
+                        setSelectedCard(filteredCards[newIndex]);
+                        setTransitioningCard(null);
                         setTimeout(() => setIsAnimating(false), 50); 
-                    }, 300); // Durata della transizione CSS (0.3s)
+                    }, 300);
                 }
             };
             
@@ -107,17 +142,17 @@
                 if (!swipeStart || isAnimating) return;
                 const touchEnd = e.changedTouches[0].clientX;
                 const swipeDistance = touchEnd - swipeStart;
-                const threshold = 50; // Distanza minima per considerare uno swipe
+                const threshold = 50;
 
-                if (swipeDistance > threshold && hasPrev) { // Swipe verso destra (Precedente)
+                if (swipeDistance > threshold && hasPrev) {
                     navigateCard(-1);
-                } else if (swipeDistance < -threshold && hasNext) { // Swipe verso sinistra (Successivo)
+                } else if (swipeDistance < -threshold && hasNext) {
                     navigateCard(1);
                 }
                 setSwipeStart(null);
             };
 
-            // SCROLL LOCK (Blocca lo scroll del body quando il modale è aperto)
+            // SCROLL LOCK
             useEffect(() => {
                 if (selectedCard) {
                     document.body.style.overflow = 'hidden';
@@ -126,17 +161,51 @@
                 }
                 return () => { document.body.style.overflow = ''; };
             }, [selectedCard]);
-            // ------------------------------------------------------------------------
 
+            // FETCH DATA ROBUSTO
             useEffect(() => { 
+                let isMounted = true;
                 const fetchCards = async () => {
+                    const loadFromCache = () => {
+                        try {
+                            const cached = localStorage.getItem(CACHE_KEY);
+                            if (cached) {
+                                const data = JSON.parse(cached);
+                                if (Array.isArray(data) && data.length > 0) {
+                                    if(isMounted) {
+                                        setCards(data);
+                                        setLoading(false);
+                                    }
+                                    return true;
+                                }
+                            }
+                        } catch (e) {
+                            console.error("Cache corrotta, pulizia in corso...", e);
+                            localStorage.removeItem(CACHE_KEY);
+                        }
+                        return false;
+                    };
+
+                    const timeoutId = setTimeout(() => {
+                        if (isMounted && loading) {
+                            if (!loadFromCache()) {
+                                setError("Tempo scaduto: connessione lenta.");
+                                setLoading(false);
+                            }
+                        }
+                    }, 10000);
+
                     try {
                         const response = await fetch(SHEET_URL);
-                        if (!response.ok) throw new Error("Errore connessione foglio");
+                        if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
                         const csvText = await response.text();
+                        
                         Papa.parse(csvText, {
                             header: true, skipEmptyLines: true,
                             complete: (results) => {
+                                clearTimeout(timeoutId);
+                                if (!isMounted) return;
+
                                 const parsedCards = results.data.map((row, index) => {
                                     let rawPrice = row["Prezzo singolo (€)"] || "0";
                                     rawPrice = rawPrice.replace("€", "").replace(",", ".").trim();
@@ -150,33 +219,51 @@
                                         album: row["album"] || "Da Ordinare"
                                     };
                                 }).filter(c => c.name !== "Senza Nome" && c.image !== ""); 
-                                setCards(parsedCards);
-                                setLoading(false);
-                                localStorage.setItem('binderCache_v2', JSON.stringify(parsedCards));
+
+                                if (parsedCards.length > 0) {
+                                    setCards(parsedCards);
+                                    setLoading(false);
+                                    localStorage.setItem(CACHE_KEY, JSON.stringify(parsedCards));
+                                } else {
+                                    throw new Error("Il foglio sembra vuoto o colonne errate.");
+                                }
                             },
-                            error: () => { throw new Error("Errore lettura CSV"); }
+                            error: (err) => { 
+                                throw new Error("Errore lettura CSV: " + err.message); 
+                            }
                         });
                     } catch (err) {
-                        console.log("Errore o offline, uso cache:", err);
-                        const cached = localStorage.getItem('binderCache_v2');
-                        if (cached) {
-                            setCards(JSON.parse(cached));
-                            setLoading(false);
-                        } else {
-                            setError("Impossibile caricare le carte. Controlla la connessione internet.");
+                        clearTimeout(timeoutId);
+                        console.log("Errore fetch, tento cache:", err);
+                        if (SHEET_URL.includes("corsproxy")) {
+                            try {
+                                const response2 = await fetch(ORIGINAL_SHEET_URL);
+                                if (response2.ok) {}
+                            } catch(e) {}
+                        }
+                        if (!loadFromCache() && isMounted) {
+                            setError(`Errore: ${err.message}. Riprova.`);
                             setLoading(false);
                         }
                     }
                 };
                 fetchCards();
+                return () => { isMounted = false; };
             }, []);
 
-            if (loading) return <div className="min-h-screen flex flex-col gap-4 items-center justify-center text-slate-400"><div className="loader"></div><p>Leggo il Raccoglitore...</p></div>;
-            if (error) return <div className="min-h-screen flex items-center justify-center text-red-400 p-6 text-center"><p><i className="fas fa-exclamation-circle text-2xl mb-2 block"></i>{error}</p></div>;
+            if (loading) return <div className="min-h-screen flex flex-col gap-4 items-center justify-center text-slate-400"><div className="loader"></div><p>Caricamento carte...</p></div>;
+            
+            if (error) return (
+                <div className="min-h-screen flex flex-col items-center justify-center text-red-400 p-6 text-center gap-4">
+                    <i className="fas fa-exclamation-circle text-4xl"></i>
+                    <p>{error}</p>
+                    <button onClick={() => window.location.reload()} className="bg-slate-800 px-4 py-2 rounded border border-slate-700 text-white">Riprova</button>
+                </div>
+            );
 
             return (
                 <div className="min-h-screen pb-6 flex flex-col">
-                    {/* Header e Ricerca (omesso per brevità, è rimasto invariato) */}
+                    {/* Header */}
                     <div className="sticky top-0 z-40 bg-slate-900/95 border-b border-slate-800 backdrop-blur-md shadow-lg">
                         <div className="max-w-4xl mx-auto px-4 py-3">
                             <div className="flex justify-between items-center mb-3">
@@ -185,21 +272,74 @@
                                     <span className="font-bold text-green-400">€ {totalValue}</span>
                                 </div>
                             </div>
-                            <div className="relative">
-                                <i className="fas fa-search absolute left-3 top-2.5 text-slate-500"></i>
-                                <input type="text" placeholder="Cerca carta..." className="w-full bg-slate-950 text-white rounded-lg pl-10 pr-4 py-2 border border-slate-700 focus:border-blue-500 transition-colors"
-                                    value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                            
+                            {/* BARRA DI RICERCA + PULSANTE FILTRO */}
+                            <div className="relative flex gap-2">
+                                <div className="relative flex-1">
+                                    <i className="fas fa-search absolute left-3 top-2.5 text-slate-500"></i>
+                                    <input type="text" placeholder="Cerca carta..." className="w-full bg-slate-950 text-white rounded-lg pl-10 pr-4 py-2 border border-slate-700 focus:border-blue-500 transition-colors"
+                                        value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                                </div>
+                                <button 
+                                    onClick={() => setShowFilters(!showFilters)}
+                                    className={`px-3 py-2 rounded-lg border transition-colors ${showFilters || activeRarity !== "Tutte" ? "bg-blue-600 border-blue-500 text-white" : "bg-slate-800 border-slate-700 text-slate-400"}`}
+                                >
+                                    <i className="fas fa-filter"></i>
+                                </button>
                             </div>
+
+                            {/* 🆕 MENU FILTRI (Dropdown) */}
+                            {showFilters && (
+                                <div className="mt-2 bg-slate-800 border border-slate-700 rounded-lg p-3 shadow-xl animate-fade-in-down">
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="text-xs text-slate-400 block mb-1">Rarità</label>
+                                            <select 
+                                                value={activeRarity}
+                                                onChange={(e) => setActiveRarity(e.target.value)}
+                                                className="w-full bg-slate-900 text-white text-sm rounded border border-slate-600 p-2 focus:border-blue-500 outline-none"
+                                            >
+                                                {filterData.rarityList.map(r => (
+                                                    <option key={r} value={r}>{r}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="text-xs text-slate-400 block mb-1">Album</label>
+                                            <select 
+                                                value={activeAlbum}
+                                                onChange={(e) => setActiveAlbum(e.target.value)}
+                                                className="w-full bg-slate-900 text-white text-sm rounded border border-slate-600 p-2 focus:border-blue-500 outline-none"
+                                            >
+                                                {filterData.albumList.map(a => (
+                                                    <option key={a} value={a}>{a}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div className="mt-3 text-right">
+                                         <button 
+                                            onClick={() => { setActiveRarity("Tutte"); setActiveAlbum("Tutti"); setShowFilters(false); }}
+                                            className="text-xs text-red-400 hover:text-red-300 underline"
+                                         >
+                                            Resetta Filtri
+                                         </button>
+                                    </div>
+                                </div>
+                            )}
+
                         </div>
+                        
+                        {/* Lista Album Orizzontale (Sincronizzata) */}
                         <div className="border-t border-slate-800 bg-slate-900/50">
                             <div className="max-w-4xl mx-auto flex overflow-x-auto no-scrollbar py-2 px-4 gap-2">
-                                {albumList.albumList.map(name => (
+                                {filterData.albumList.map(name => (
                                     <button key={name} onClick={() => setActiveAlbum(name)}
                                         className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-2 ${activeAlbum === name ? "bg-blue-600 text-white shadow-lg shadow-blue-900/50" : "bg-slate-800 text-slate-400 border border-slate-700"}`}>
                                         
                                         {name}
                                         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${activeAlbum === name ? "bg-white text-blue-600" : "bg-slate-700 text-slate-300"}`}>
-                                            {albumList.albumCounts[name] || 0}
+                                            {filterData.albumCounts[name] || 0}
                                         </span>
                                     </button>
                                 ))}
@@ -212,10 +352,10 @@
                         {filteredCards.length > 0 ? (
                             filteredCards.map(card => (
                                 <div key={card.id} 
-                                    onClick={() => setSelectedCard(card)} 
-                                    className="card-hover bg-slate-800 rounded-lg overflow-hidden border border-slate-700 shadow-md flex flex-col relative group transition-all duration-300 cursor-pointer">
+                                    onClick={() => openModal(card)} 
+                                    className="card-hover bg-slate-800 rounded-lg overflow-hidden border border-slate-700 shadow-md flex flex-col relative group transition-all duration-300 ease-in-out cursor-pointer hover:shadow-xl hover:shadow-blue-500/50 hover:border-blue-400/50">
                                     <div className="relative aspect-[2/3] overflow-hidden">
-                                        <img src={card.image} alt={card.name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" loading="lazy" />
+                                        <img src={card.image} alt={card.name} className="w-full h-full object-cover transition-transform duration-500" loading="lazy" />
                                         <div className="absolute bottom-1 left-1 bg-black/80 px-1.5 py-0.5 rounded text-[10px] font-bold text-white border border-slate-600">
                                             {card.code}
                                         </div>
@@ -233,20 +373,20 @@
                                 </div>
                             ))
                         ) : (
-                            <div className="col-span-full text-center py-12 text-slate-500"><i className="fas fa-ghost text-3xl mb-2 opacity-50"></i><p>Nessuna carta trovata.</p></div>
+                            <div className="col-span-full text-center py-12 text-slate-500"><i className="fas fa-ghost text-3xl mb-2 opacity-50"></i><p>Nessuna carta trovata con questi filtri.</p></div>
                         )}
                     </div>
 
-                    {/* COMPONENTE MODALE FULL-SCREEN E SWIPE */}
+                    {/* COMPONENTE MODALE FULL-SCREEN CON ZOOM IN/OUT */}
                     {selectedCard && (
                         <div 
-                            className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-sm transition-opacity duration-300" 
-                            onClick={() => setSelectedCard(null)}
+                            className={`fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-sm transition-opacity duration-300 ${isVisible ? 'opacity-100' : 'opacity-0'}`} 
+                            onClick={closeModal}
                             onTouchStart={handleTouchStart}
                             onTouchEnd={handleTouchEnd}
                         >
                             <div 
-                                className={`relative w-[90%] max-w-sm sm:max-w-md lg:max-w-lg transition-transform duration-300 ease-out scale-100`} 
+                                className={`relative w-[90%] max-w-sm sm:max-w-md lg:max-w-lg transition-transform duration-300 ease-out ${isVisible ? 'scale-100' : 'scale-90'}`} 
                                 onClick={(e) => e.stopPropagation()} 
                             >
                                 {/* Pulsante Precedente */}
@@ -260,19 +400,19 @@
                                     </button>
                                 )}
 
-                                {/* 🆕 IMMAGINE CON ANIMAZIONE DI DISSOLVENZA */}
+                                {/* Immagine con Transizione */}
                                 <img 
                                     src={selectedCard.image}
                                     className={`w-full h-auto rounded-xl shadow-2xl border-4 border-slate-700 card-image-transition ${isAnimating ? 'opacity-0' : 'opacity-100'}`}
                                     alt={selectedCard.name}
                                 />
-                                {/* 🆕 Se una carta è in transizione, la mostriamo momentaneamente dietro */}
+                                {/* Ghost Card per animazione Next/Prev */}
                                 {transitioningCard && (
                                     <img
                                         src={transitioningCard.image}
                                         className="w-full h-auto rounded-xl shadow-2xl border-4 border-slate-700 absolute inset-0 card-image-transition opacity-0"
                                         alt={transitioningCard.name}
-                                        style={{ zIndex: -1 }} // La mettiamo dietro
+                                        style={{ zIndex: -1 }}
                                     />
                                 )}
                                 
@@ -290,7 +430,7 @@
                                 {/* Pulsante di chiusura (X) */}
                                 <button 
                                     className="absolute top-4 right-4 text-white text-4xl opacity-70 hover:opacity-100 transition-opacity p-2 bg-black/50 rounded-full z-20" 
-                                    onClick={() => setSelectedCard(null)}
+                                    onClick={closeModal}
                                     aria-label="Chiudi"
                                 >
                                     &times;
@@ -311,12 +451,5 @@
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
-
-    <script>
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
-        }
-    </script>
 </body>
 </html>
-
